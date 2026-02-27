@@ -1,0 +1,5 @@
+BOT_TOKEN=8747321651:AAFlsqMcsNze2lpTCAXkSZksLprkMbQJBqo
+ADMIN_ID=5410464726
+CHANNEL_ID=--1002159959535
+CHANNEL_LINK=https://t.me/gavrilov_studio
+DB_PATH=database.sqlite3
