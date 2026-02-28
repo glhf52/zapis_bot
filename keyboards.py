@@ -14,7 +14,7 @@ def main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                text="📸 Портфолио", callback_data="menu_portfolio"
+                text="🏥 Наши Клиники", callback_data="menu_portfolio"
             ),
         ],
         [
