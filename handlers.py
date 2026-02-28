@@ -38,6 +38,16 @@ MAIN_MENU_TEXT = (
 
 async def send_main_menu(message: Message, user_id: int) -> None:
     """Показ главного меню с картинкой (если задан MAIN_MENU_IMAGE)."""
+    await db.get_or_create_user(user_id)
+
+    # Удаляем предыдущее главное меню, чтобы оставалось только одно
+    old_menu_id = await db.get_last_menu_message_id(user_id)
+    if old_menu_id:
+        try:
+            await message.bot.delete_message(chat_id=message.chat.id, message_id=old_menu_id)
+        except Exception:
+            pass
+
     is_admin = user_id == config.admin_id
     kb = main_menu_keyboard(is_admin=is_admin)
 
@@ -60,14 +70,16 @@ async def send_main_menu(message: Message, user_id: int) -> None:
             else:
                 # Позволяем передавать file_id из Telegram через MAIN_MENU_IMAGE
                 photo = image_value
-            await message.answer_photo(photo=photo, caption=MAIN_MENU_TEXT, reply_markup=kb)
+            sent = await message.answer_photo(photo=photo, caption=MAIN_MENU_TEXT, reply_markup=kb)
+            await db.set_last_menu_message_id(user_id, sent.message_id)
             return
         except Exception as e:
             # Если картинка недоступна/путь неверный — показываем обычное меню текстом.
             # Логируем причину для диагностики на хостинге.
             print(f"[MAIN_MENU_IMAGE] send photo failed: {e}", flush=True)
 
-    await message.answer(MAIN_MENU_TEXT, reply_markup=kb)
+    sent = await message.answer(MAIN_MENU_TEXT, reply_markup=kb)
+    await db.set_last_menu_message_id(user_id, sent.message_id)
 
 
 async def safe_edit_text(

@@ -20,7 +20,8 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     tg_id INTEGER UNIQUE NOT NULL,
                     name TEXT,
-                    phone TEXT
+                    phone TEXT,
+                    last_menu_message_id INTEGER
                 )
                 """
             )
@@ -66,6 +67,14 @@ class Database:
                 )
                 """
             )
+            # Для уже существующих БД добавляем колонку last_menu_message_id, если её нет
+            cur = await db.execute("PRAGMA table_info(users)")
+            cols = await cur.fetchall()
+            col_names = {c[1] for c in cols}
+            if "last_menu_message_id" not in col_names:
+                await db.execute(
+                    "ALTER TABLE users ADD COLUMN last_menu_message_id INTEGER"
+                )
             await db.commit()
 
     async def get_or_create_user(self, tg_id: int) -> int:
@@ -92,6 +101,28 @@ class Database:
             await db.execute(
                 "UPDATE users SET name = ?, phone = ? WHERE tg_id = ?",
                 (name, phone, tg_id),
+            )
+            await db.commit()
+
+    async def get_last_menu_message_id(self, tg_id: int) -> Optional[int]:
+        """Получить ID последнего сообщения главного меню пользователя."""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                "SELECT last_menu_message_id FROM users WHERE tg_id = ?",
+                (tg_id,),
+            )
+            row = await cur.fetchone()
+            if not row:
+                return None
+            return row["last_menu_message_id"]
+
+    async def set_last_menu_message_id(self, tg_id: int, message_id: int) -> None:
+        """Сохранить ID последнего сообщения главного меню пользователя."""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "UPDATE users SET last_menu_message_id = ? WHERE tg_id = ?",
+                (message_id, tg_id),
             )
             await db.commit()
 
