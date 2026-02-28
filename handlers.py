@@ -33,15 +33,21 @@ MAIN_MENU_TEXT = (
     "Выберите нужный раздел в меню ниже!"
 )
 
+# Резервная картинка для главного меню (если MAIN_MENU_IMAGE не задан в окружении)
+DEFAULT_MAIN_MENU_IMAGE = (
+    "AgACAgIAAxkBAAFDZo9pog5aMzggOdMP-oPWa0_oGNGVcgACChJrGwlKEUkTxsFDGN3DogEAAwIAA3gAAzoE"
+)
+
 
 async def send_main_menu(message: Message, user_id: int) -> None:
     """Показ главного меню с картинкой (если задан MAIN_MENU_IMAGE)."""
     is_admin = user_id == config.admin_id
     kb = main_menu_keyboard(is_admin=is_admin)
 
-    if config.main_menu_image:
+    image_source = (config.main_menu_image or "").strip() or DEFAULT_MAIN_MENU_IMAGE
+    if image_source:
         try:
-            image_value = config.main_menu_image.strip()
+            image_value = image_source
             if image_value.startswith(("http://", "https://")):
                 photo = image_value
             elif os.path.exists(image_value):
