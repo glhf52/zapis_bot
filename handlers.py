@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, date, time, timedelta
 
 from aiogram import Router, F
@@ -40,11 +41,14 @@ async def send_main_menu(message: Message, user_id: int) -> None:
 
     if config.main_menu_image:
         try:
-            photo = (
-                config.main_menu_image
-                if config.main_menu_image.startswith(("http://", "https://"))
-                else FSInputFile(config.main_menu_image)
-            )
+            image_value = config.main_menu_image.strip()
+            if image_value.startswith(("http://", "https://")):
+                photo = image_value
+            elif os.path.exists(image_value):
+                photo = FSInputFile(image_value)
+            else:
+                # Позволяем передавать file_id из Telegram через MAIN_MENU_IMAGE
+                photo = image_value
             await message.answer_photo(photo=photo, caption=MAIN_MENU_TEXT, reply_markup=kb)
             return
         except Exception:
@@ -92,6 +96,21 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     """Стартовое сообщение и главное меню."""
     await state.clear()
     await send_main_menu(message, message.from_user.id)
+
+
+@router.message(F.photo)
+async def get_photo_file_id(message: Message) -> None:
+    """
+    Утилита для админа:
+    отправьте боту фото, и он вернёт file_id (самый большой размер).
+    """
+    if message.from_user.id != config.admin_id:
+        return
+    file_id = message.photo[-1].file_id
+    await message.answer(
+        "<b>file_id для MAIN_MENU_IMAGE:</b>\n"
+        f"<code>{file_id}</code>"
+    )
 
 
 @router.callback_query(F.data == "back_to_menu")
