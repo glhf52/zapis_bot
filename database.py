@@ -1,4 +1,5 @@
 import aiosqlite
+import os
 from typing import Optional, List, Tuple
 from datetime import datetime, date, time, timedelta
 
@@ -13,6 +14,13 @@ class Database:
 
     async def init(self) -> None:
         """Создание таблиц при старте бота."""
+        # Если указан путь с директорией (например /data/database.sqlite3),
+        # создаём директорию заранее для корректной работы на хостинге.
+        if self.path and self.path != ":memory:":
+            parent_dir = os.path.dirname(self.path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
                 """

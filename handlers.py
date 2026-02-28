@@ -27,11 +27,11 @@ from states import BookingStates, AdminStates
 
 
 router = Router()
-MAIN_MENU_IMAGE_CACHE_FILE = Path("main_menu_image.txt")
+MAIN_MENU_IMAGE_CACHE_FILE = Path(config.database_path).parent / "main_menu_image.txt"
 
 MAIN_MENU_TEXT = (
     "<b>Привет!</b>\n\n"
-    "Я бот для записи В нашу Стоматология Green Aple\n"
+    "Я бот для записи В нашу Стоматологию Green Aple\n"
     "Выберите нужный раздел в меню ниже!"
 )
 
