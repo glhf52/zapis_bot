@@ -134,8 +134,8 @@ async def show_prices(callback: CallbackQuery) -> None:
     """Прайсы (без FSM)."""
     text = (
         "<b>Прайс-лист</b>\n\n"
-        "Френч — <b>1000₽</b>\n"
-        "Квадрат — <b>500₽</b>"
+        "Осмотр — <b>1000₽</b>\n"
+        "Лечение Краиеса — <b>5000₽</b>"
     )
     await safe_edit_text(
         callback,

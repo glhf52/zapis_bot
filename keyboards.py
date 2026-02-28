@@ -10,7 +10,7 @@ def main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📅 Записаться", callback_data="menu_book"),
         ],
         [
-            InlineKeyboardButton(text="💅 Прайсы", callback_data="menu_prices"),
+            InlineKeyboardButton(text="💰 Прайсы", callback_data="menu_prices"),
         ],
         [
             InlineKeyboardButton(
