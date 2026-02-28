@@ -5,7 +5,7 @@ from datetime import datetime, date, time, timedelta
 from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.utils.formatting import Bold, as_marked_section
 from aiogram.exceptions import TelegramBadRequest
 
@@ -26,6 +26,33 @@ from states import BookingStates, AdminStates
 
 router = Router()
 
+MAIN_MENU_TEXT = (
+    "<b>Привет!</b>\n\n"
+    "Я бот для записи В нашу Стоматология Green Aple\n"
+    "Выберите нужный раздел в меню ниже!"
+)
+
+
+async def send_main_menu(message: Message, user_id: int) -> None:
+    """Показ главного меню с картинкой (если задан MAIN_MENU_IMAGE)."""
+    is_admin = user_id == config.admin_id
+    kb = main_menu_keyboard(is_admin=is_admin)
+
+    if config.main_menu_image:
+        try:
+            photo = (
+                config.main_menu_image
+                if config.main_menu_image.startswith(("http://", "https://"))
+                else FSInputFile(config.main_menu_image)
+            )
+            await message.answer_photo(photo=photo, caption=MAIN_MENU_TEXT, reply_markup=kb)
+            return
+        except Exception:
+            # Если картинка недоступна/путь неверный — показываем обычное меню текстом.
+            pass
+
+    await message.answer(MAIN_MENU_TEXT, reply_markup=kb)
+
 
 async def safe_edit_text(
     message: Message | CallbackQuery,
@@ -39,7 +66,10 @@ async def safe_edit_text(
     # На вход может прийти объект Message или CallbackQuery.message
     msg = message.message if isinstance(message, CallbackQuery) else message
     try:
-        await msg.edit_text(text, reply_markup=reply_markup)
+        if msg.photo:
+            await msg.edit_caption(caption=text, reply_markup=reply_markup)
+        else:
+            await msg.edit_text(text, reply_markup=reply_markup)
     except TelegramBadRequest as e:
         if "message is not modified" in str(e):
             return
@@ -61,23 +91,16 @@ async def check_subscription(user_id: int, bot) -> bool:
 async def cmd_start(message: Message, state: FSMContext) -> None:
     """Стартовое сообщение и главное меню."""
     await state.clear()
-    text = (
-        "<b>Привет!</b>\n\n"
-        "Я бот для записи на маникюр.\n"
-        "Выберите нужный раздел в меню ниже."
-    )
-    is_admin = message.from_user.id == config.admin_id
-    await message.answer(text, reply_markup=main_menu_keyboard(is_admin=is_admin))
+    await send_main_menu(message, message.from_user.id)
 
 
 @router.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    is_admin = callback.from_user.id == config.admin_id
     await safe_edit_text(
         callback,
-        "<b>Главное меню</b>\nВыберите нужный раздел:",
-        reply_markup=main_menu_keyboard(is_admin=is_admin),
+        MAIN_MENU_TEXT,
+        reply_markup=main_menu_keyboard(is_admin=callback.from_user.id == config.admin_id),
     )
 
 

@@ -16,6 +16,7 @@ class Config:
     channel_id: int
     channel_link: str
     database_path: str = "database.sqlite3"
+    main_menu_image: str = ""
 
 
 def _required_env(name: str) -> str:
@@ -32,6 +33,7 @@ def load_config() -> Config:
     CHANNEL_ID = int(_required_env("CHANNEL_ID"))
     CHANNEL_LINK = _required_env("CHANNEL_LINK")
     DB_PATH = os.getenv("DB_PATH", "database.sqlite3")
+    MAIN_MENU_IMAGE = os.getenv("MAIN_MENU_IMAGE", "")
 
     return Config(
         bot_token=BOT_TOKEN,
@@ -39,6 +41,7 @@ def load_config() -> Config:
         channel_id=CHANNEL_ID,
         channel_link=CHANNEL_LINK,
         database_path=DB_PATH,
+        main_menu_image=MAIN_MENU_IMAGE,
     )
 
 
