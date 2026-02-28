@@ -5,7 +5,7 @@ from datetime import datetime, date, time, timedelta
 from pathlib import Path
 
 from aiogram import Router, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.utils.formatting import Bold, as_marked_section
@@ -121,6 +121,14 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     """Стартовое сообщение и главное меню."""
     await state.clear()
     await send_main_menu(message, message.from_user.id)
+
+
+@router.message(StateFilter(None), F.text)
+async def ask_to_start(message: Message) -> None:
+    """Подсказка для пользователя до старта."""
+    if message.text.strip().lower() == "/start":
+        return
+    await message.answer("Пишите /start чтобы начать.")
 
 
 @router.message(F.photo)
