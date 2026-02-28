@@ -20,7 +20,7 @@ class Config:
 
 
 def _required_env(name: str) -> str:
-    value = os.getenv(name)
+    value = (os.getenv(name) or "").strip()
     if not value:
         raise RuntimeError(f"Не задана обязательная переменная окружения: {name}")
     return value

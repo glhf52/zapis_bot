@@ -51,9 +51,10 @@ async def send_main_menu(message: Message, user_id: int) -> None:
                 photo = image_value
             await message.answer_photo(photo=photo, caption=MAIN_MENU_TEXT, reply_markup=kb)
             return
-        except Exception:
+        except Exception as e:
             # Если картинка недоступна/путь неверный — показываем обычное меню текстом.
-            pass
+            # Логируем причину для диагностики на хостинге.
+            print(f"[MAIN_MENU_IMAGE] send photo failed: {e}")
 
     await message.answer(MAIN_MENU_TEXT, reply_markup=kb)
 
