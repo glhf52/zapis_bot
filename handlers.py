@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, date, time, timedelta
+from pathlib import Path
 
 from aiogram import Router, F
 from aiogram.filters import CommandStart
@@ -26,6 +27,7 @@ from states import BookingStates, AdminStates
 
 
 router = Router()
+MAIN_MENU_IMAGE_CACHE_FILE = Path("main_menu_image.txt")
 
 MAIN_MENU_TEXT = (
     "<b>Привет!</b>\n\n"
@@ -40,7 +42,14 @@ async def send_main_menu(message: Message, user_id: int) -> None:
     kb = main_menu_keyboard(is_admin=is_admin)
 
     db_image = await db.get_setting("main_menu_image")
-    image_source = (db_image or config.main_menu_image or "").strip()
+    cached_image = ""
+    if MAIN_MENU_IMAGE_CACHE_FILE.exists():
+        try:
+            cached_image = MAIN_MENU_IMAGE_CACHE_FILE.read_text(encoding="utf-8").strip()
+        except Exception:
+            cached_image = ""
+
+    image_source = (db_image or cached_image or config.main_menu_image or "").strip()
     if image_source:
         try:
             image_value = image_source
@@ -111,6 +120,10 @@ async def get_photo_file_id(message: Message) -> None:
         return
     file_id = message.photo[-1].file_id
     await db.set_setting("main_menu_image", file_id)
+    try:
+        MAIN_MENU_IMAGE_CACHE_FILE.write_text(file_id, encoding="utf-8")
+    except Exception as e:
+        print(f"[MAIN_MENU_IMAGE] cache write failed: {e}", flush=True)
     await message.answer(
         "<b>Готово!</b> Картинка главного меню обновлена.\n\n"
         "<b>file_id:</b>\n"
