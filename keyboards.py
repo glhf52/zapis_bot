@@ -59,15 +59,9 @@ def subscription_check_keyboard(channel_link: str) -> InlineKeyboardMarkup:
 
 
 def portfolio_keyboard() -> InlineKeyboardMarkup:
-    """Кнопка для просмотра портфолио + назад в меню."""
+    """Кнопка возврата в меню для раздела клиник."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Смотреть портфолио",
-                    url="https://ru.pinterest.com/crystalwithluv/_created/",
-                )
-            ],
             [
                 InlineKeyboardButton(
                     text="🔙 В меню", callback_data="back_to_menu"
