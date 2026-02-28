@@ -58,6 +58,14 @@ class Database:
                 )
                 """
             )
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
             await db.commit()
 
     async def get_or_create_user(self, tg_id: int) -> int:
@@ -369,6 +377,30 @@ class Database:
                 (booking_id,),
             )
             return await cur.fetchone()
+
+    async def set_setting(self, key: str, value: str) -> None:
+        """Сохранить произвольную настройку."""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                INSERT INTO settings (key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (key, value),
+            )
+            await db.commit()
+
+    async def get_setting(self, key: str) -> Optional[str]:
+        """Получить настройку по ключу."""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                "SELECT value FROM settings WHERE key = ?",
+                (key,),
+            )
+            row = await cur.fetchone()
+            return row["value"] if row else None
 
 
 db = Database(config.database_path)

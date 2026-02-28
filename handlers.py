@@ -33,18 +33,14 @@ MAIN_MENU_TEXT = (
     "Выберите нужный раздел в меню ниже!"
 )
 
-# Резервная картинка для главного меню (если MAIN_MENU_IMAGE не задан в окружении)
-DEFAULT_MAIN_MENU_IMAGE = (
-    "AgACAgIAAxkBAAFDZo9pog5aMzggOdMP-oPWa0_oGNGVcgACChJrGwlKEUkTxsFDGN3DogEAAwIAA3gAAzoE"
-)
-
 
 async def send_main_menu(message: Message, user_id: int) -> None:
     """Показ главного меню с картинкой (если задан MAIN_MENU_IMAGE)."""
     is_admin = user_id == config.admin_id
     kb = main_menu_keyboard(is_admin=is_admin)
 
-    image_source = (config.main_menu_image or "").strip() or DEFAULT_MAIN_MENU_IMAGE
+    db_image = await db.get_setting("main_menu_image")
+    image_source = (db_image or config.main_menu_image or "").strip()
     if image_source:
         try:
             image_value = image_source
@@ -114,9 +110,12 @@ async def get_photo_file_id(message: Message) -> None:
     if message.from_user.id != config.admin_id:
         return
     file_id = message.photo[-1].file_id
+    await db.set_setting("main_menu_image", file_id)
     await message.answer(
-        "<b>file_id для MAIN_MENU_IMAGE:</b>\n"
-        f"<code>{file_id}</code>"
+        "<b>Готово!</b> Картинка главного меню обновлена.\n\n"
+        "<b>file_id:</b>\n"
+        f"<code>{file_id}</code>\n\n"
+        "Теперь отправьте <code>/start</code> и проверьте меню."
     )
 
 
