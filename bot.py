@@ -1,5 +1,4 @@
 import asyncio
-from datetime import datetime
 
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
@@ -9,27 +8,18 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import config
 from database import db
-from handlers import router, schedule_reminder
+from handlers import router, schedule_booking_reminders
 
 
 async def restore_reminders(scheduler: AsyncIOScheduler, bot: Bot) -> None:
     """Восстановление задач напоминаний после перезапуска бота."""
-    rows = await db.get_all_reminders()
-    now = datetime.now()
+    rows = await db.get_booking_for_reminders()
     for r in rows:
         booking_id = r["booking_id"]
-        run_at = datetime.fromisoformat(r["run_at"])
         user_tg_id = r["tg_id"]
         date_str = r["date"]
         time_str = r["time"]
-        status = r["status"]
-
-        if status != "active" or run_at <= now:
-            # Если запись уже неактивна или время напоминания прошло — просто очищаем
-            await db.delete_reminder(booking_id)
-            continue
-
-        await schedule_reminder(
+        await schedule_booking_reminders(
             scheduler=scheduler,
             booking_id=booking_id,
             user_tg_id=user_tg_id,

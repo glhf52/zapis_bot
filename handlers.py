@@ -343,34 +343,64 @@ async def schedule_reminder(
     time_str: str,
     bot,
 ) -> None:
-    """Постановка задачи напоминания за 24 часа."""
+    """Совместимость: планирует все напоминания для записи."""
+    await schedule_booking_reminders(
+        scheduler=scheduler,
+        booking_id=booking_id,
+        user_tg_id=user_tg_id,
+        date_str=date_str,
+        time_str=time_str,
+        bot=bot,
+    )
+
+
+async def schedule_booking_reminders(
+    scheduler,
+    booking_id: int,
+    user_tg_id: int,
+    date_str: str,
+    time_str: str,
+    bot,
+) -> None:
+    """Постановка напоминаний за 24/4/2 часа до записи."""
     dt_slot = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-    run_at = dt_slot - timedelta(hours=24)
     now = datetime.now()
-    if run_at <= now:
-        # Если запись меньше чем за 24 часа — напоминание не создаём.
-        return
 
-    job_id = f"reminder_{booking_id}"
+    reminders = [
+        (24, f"Напоминаем, что вы записаны в стоматологию завтра в {time_str}.\nЖдём вас! 🦷"),
+        (4, f"Напоминаем, ваш приём через 4 часа в {time_str}.\nДо встречи! 🦷"),
+        (2, f"Напоминаем, ваш приём через 2 часа в {time_str}.\nДо встречи! 🦷"),
+    ]
 
-    async def send_reminder():
+    for hours_before, text in reminders:
+        run_at = dt_slot - timedelta(hours=hours_before)
+        if run_at <= now:
+            continue
+        job_id = f"reminder_{booking_id}_{hours_before}h"
+
+        async def send_reminder(reminder_text: str = text):
+            try:
+                await bot.send_message(user_tg_id, reminder_text)
+            except Exception:
+                pass
+
+        scheduler.add_job(
+            send_reminder,
+            "date",
+            run_date=run_at,
+            id=job_id,
+            replace_existing=True,
+        )
+
+
+def remove_booking_reminders(scheduler, booking_id: int) -> None:
+    """Удаление всех задач напоминаний для записи."""
+    for hours_before in (24, 4, 2):
+        job_id = f"reminder_{booking_id}_{hours_before}h"
         try:
-            await bot.send_message(
-                user_tg_id,
-                f"Напоминаем, что вы записаны в стоматологию завтра в {time_str}.\n"
-                "Ждём вас! 🦷",
-            )
+            scheduler.remove_job(job_id)
         except Exception:
             pass
-
-    scheduler.add_job(
-        send_reminder,
-        "date",
-        run_date=run_at,
-        id=job_id,
-        replace_existing=True,
-    )
-    await db.save_reminder(booking_id, run_at, job_id)
 
 
 @router.callback_query(BookingStates.confirming, F.data == "confirm_booking")
@@ -419,8 +449,8 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, bot, sched
     date_str = slot["date"]
     time_str = slot["time"]
 
-    # Планируем напоминание
-    await schedule_reminder(
+    # Планируем напоминания
+    await schedule_booking_reminders(
         scheduler=scheduler,
         booking_id=booking_id,
         user_tg_id=callback.from_user.id,
@@ -512,13 +542,8 @@ async def user_cancel_booking(callback: CallbackQuery, bot, scheduler) -> None:
     _, booking_id_str = callback.data.split(":", maxsplit=1)
     booking_id = int(booking_id_str)
 
-    # Удаляем напоминание
-    job_id = await db.delete_reminder(booking_id)
-    if job_id:
-        try:
-            scheduler.remove_job(job_id)
-        except Exception:
-            pass
+    # Удаляем напоминания
+    remove_booking_reminders(scheduler, booking_id)
 
     # Освобождаем слот
     res = await db.cancel_booking(booking_id)
@@ -812,12 +837,7 @@ async def admin_cancel_booking_do(
         await state.clear()
         return
 
-    job_id = await db.delete_reminder(booking_id)
-    if job_id:
-        try:
-            scheduler.remove_job(job_id)
-        except Exception:
-            pass
+    remove_booking_reminders(scheduler, booking_id)
 
     res = await db.cancel_booking(booking_id)
     if not res:
