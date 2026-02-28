@@ -60,7 +60,7 @@ async def send_main_menu(message: Message, user_id: int) -> None:
         except Exception as e:
             # Если картинка недоступна/путь неверный — показываем обычное меню текстом.
             # Логируем причину для диагностики на хостинге.
-            print(f"[MAIN_MENU_IMAGE] send photo failed: {e}")
+            print(f"[MAIN_MENU_IMAGE] send photo failed: {e}", flush=True)
 
     await message.answer(MAIN_MENU_TEXT, reply_markup=kb)
 
