@@ -180,6 +180,29 @@ def admin_doctors_keyboard(doctors: list[tuple[int, str]]) -> InlineKeyboardMark
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def admin_days_keyboard(days: list[str], prefix: str) -> InlineKeyboardMarkup:
+    """Клавиатура выбора даты для админских действий."""
+    buttons: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for day_str in days:
+        d = date.fromisoformat(day_str)
+        row.append(
+            InlineKeyboardButton(
+                text=d.strftime("%d.%m"),
+                callback_data=f"{prefix}:{day_str}",
+            )
+        )
+        if len(row) == 4:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append(
+        [InlineKeyboardButton(text="🔙 В админ-панель", callback_data="menu_admin")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def confirm_booking_keyboard() -> InlineKeyboardMarkup:
     """Подтверждение записи."""
     return InlineKeyboardMarkup(

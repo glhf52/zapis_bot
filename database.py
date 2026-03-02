@@ -570,6 +570,46 @@ class Database:
             row = await cur.fetchone()
             return row["value"] if row else None
 
+    async def get_slot_days(self) -> List[str]:
+        """Получить даты, на которые есть слоты (для админских кнопок)."""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                """
+                SELECT DISTINCT date
+                FROM slots
+                ORDER BY date
+                """
+            )
+            rows = await cur.fetchall()
+            return [row["date"] for row in rows]
+
+    async def get_day_schedule(self, d: date) -> List[aiosqlite.Row]:
+        """Полное расписание на день: все слоты + статус + клиент."""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                """
+                SELECT s.id as slot_id,
+                       s.time as time,
+                       s.is_available as is_available,
+                       d.name as doctor_name,
+                       p.name as procedure_name,
+                       b.id as booking_id,
+                       u.name as client_name,
+                       u.phone as client_phone
+                FROM slots s
+                LEFT JOIN doctors d ON d.id = s.doctor_id
+                LEFT JOIN procedures p ON p.id = s.procedure_id
+                LEFT JOIN bookings b ON b.slot_id = s.id AND b.status = 'active'
+                LEFT JOIN users u ON u.id = b.user_id
+                WHERE s.date = ?
+                ORDER BY s.time
+                """,
+                (d.isoformat(),),
+            )
+            return await cur.fetchall()
+
 
 db = Database(config.database_path)
 

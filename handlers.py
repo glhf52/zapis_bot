@@ -20,6 +20,7 @@ from keyboards import (
     booking_doctors_keyboard,
     admin_procedures_keyboard,
     admin_doctors_keyboard,
+    admin_days_keyboard,
     booking_days_keyboard,
     booking_times_keyboard,
     confirm_booking_keyboard,
@@ -949,32 +950,42 @@ async def admin_add_times(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(AdminStates.choosing_action, F.data == "admin_close_day")
 async def admin_close_day_start(callback: CallbackQuery, state: FSMContext) -> None:
-    """Запрос даты для закрытия дня."""
+    """Выбор даты кнопками для закрытия дня."""
     if callback.from_user.id != config.admin_id:
         await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    days = await db.get_slot_days()
+    if not days:
+        await callback.answer("Нет дней со слотами для закрытия.", show_alert=True)
         return
 
     await state.set_state(AdminStates.closing_day_choose)
     await safe_edit_text(
         callback,
-        "Введите дату в формате <b>ДД.ММ.ГГГГ</b>, которую нужно полностью закрыть:",
+        "<b>Выберите день</b>, который нужно полностью закрыть:",
+        reply_markup=admin_days_keyboard(days, prefix="admin_close_day_pick"),
     )
 
 
-@router.message(AdminStates.closing_day_choose)
-async def admin_close_day_finish(message: Message, state: FSMContext) -> None:
-    if message.from_user.id != config.admin_id:
-        await message.answer("Недостаточно прав.")
+@router.callback_query(
+    AdminStates.closing_day_choose, F.data.startswith("admin_close_day_pick:")
+)
+async def admin_close_day_finish(callback: CallbackQuery, state: FSMContext) -> None:
+    if callback.from_user.id != config.admin_id:
+        await callback.answer("Недостаточно прав.", show_alert=True)
         return
     try:
-        dt = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
+        _, date_str = callback.data.split(":", maxsplit=1)
+        dt = date.fromisoformat(date_str)
     except ValueError:
-        await message.answer("Неверный формат даты. Используйте ДД.ММ.ГГГГ.")
+        await callback.answer("Ошибка даты.", show_alert=True)
         return
 
     await db.close_day(dt)
     await state.clear()
-    await message.answer(
+    await safe_edit_text(
+        callback,
         f"День {dt.strftime('%d.%m.%Y')} полностью закрыт.",
         reply_markup=admin_panel_keyboard(),
     )
@@ -982,46 +993,66 @@ async def admin_close_day_finish(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(AdminStates.choosing_action, F.data == "admin_view_day")
 async def admin_view_day_start(callback: CallbackQuery, state: FSMContext) -> None:
-    """Просмотр расписания на дату."""
+    """Выбор даты кнопками для просмотра расписания."""
     if callback.from_user.id != config.admin_id:
         await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    days = await db.get_slot_days()
+    if not days:
+        await callback.answer("Пока нет слотов для просмотра расписания.", show_alert=True)
         return
 
     await state.set_state(AdminStates.viewing_day_choose)
     await safe_edit_text(
         callback,
-        "Введите дату в формате <b>ДД.ММ.ГГГГ</b>, чтобы посмотреть слоты и записи:",
+        "<b>Выберите дату</b>, чтобы посмотреть расписание:",
+        reply_markup=admin_days_keyboard(days, prefix="admin_view_day_pick"),
     )
 
 
-@router.message(AdminStates.viewing_day_choose)
-async def admin_view_day_show(message: Message, state: FSMContext) -> None:
-    if message.from_user.id != config.admin_id:
-        await message.answer("Недостаточно прав.")
+@router.callback_query(
+    AdminStates.viewing_day_choose, F.data.startswith("admin_view_day_pick:")
+)
+async def admin_view_day_show(callback: CallbackQuery, state: FSMContext) -> None:
+    if callback.from_user.id != config.admin_id:
+        await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
     try:
-        dt = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
+        _, date_str = callback.data.split(":", maxsplit=1)
+        dt = date.fromisoformat(date_str)
     except ValueError:
-        await message.answer("Неверный формат даты. Используйте ДД.ММ.ГГГГ.")
+        await callback.answer("Ошибка даты.", show_alert=True)
         return
 
-    # Показываем список слотов (упрощённо через get_available_times, можно расширить при необходимости)
-    slots = await db.get_available_times(dt)
-    if not slots:
-        await message.answer(
-            f"На {dt.strftime('%d.%m.%Y')} слотов нет или все заняты.",
+    rows = await db.get_day_schedule(dt)
+    if not rows:
+        await state.clear()
+        await safe_edit_text(
+            callback,
+            f"На {dt.strftime('%d.%m.%Y')} расписания нет.",
             reply_markup=admin_panel_keyboard(),
         )
-        await state.clear()
         return
 
+    lines = []
+    for row in rows:
+        doctor = row["doctor_name"] or "Без врача"
+        procedure = row["procedure_name"] or "Без процедуры"
+        if row["booking_id"]:
+            client = row["client_name"] or "Без имени"
+            phone = row["client_phone"] or "без телефона"
+            status = f"🔴 Занято ({client}, {phone})"
+        else:
+            status = "🟢 Свободно"
+        lines.append(f"{row['time']} — {procedure}, {doctor}\n{status}")
+
     text = as_marked_section(
-        Bold(f"Свободные слоты на {dt.strftime('%d.%m.%Y')}:"),
-        *[s["time"] for s in slots],
+        Bold(f"Расписание на {dt.strftime('%d.%m.%Y')}:"), *lines
     ).as_html()
     await state.clear()
-    await message.answer(text, reply_markup=admin_panel_keyboard())
+    await safe_edit_text(callback, text, reply_markup=admin_panel_keyboard())
 
 
 @router.callback_query(AdminStates.choosing_action, F.data == "admin_cancel_booking")
