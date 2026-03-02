@@ -55,8 +55,7 @@
 
    Если используете Google Sheets:
    - `GOOGLE_SHEETS_ID` — ID таблицы;
-   - `GOOGLE_SERVICE_ACCOUNT_FILE` — путь к JSON ключу сервисного аккаунта (локально);
-   - или `GOOGLE_SERVICE_ACCOUNT_JSON` — JSON ключ целиком одной строкой (удобно для Railway Variables).
+   - `GOOGLE_SERVICE_ACCOUNT_FILE` — путь к JSON ключу сервисного аккаунта.
 
 5. **Запустить бота:**
 

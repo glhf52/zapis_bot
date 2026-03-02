@@ -20,7 +20,6 @@ class Config:
     storage_backend: str = "sqlite"
     google_sheets_id: str = ""
     google_service_account_file: str = ""
-    google_service_account_json: str = ""
 
 
 def _required_env(name: str) -> str:
@@ -41,7 +40,6 @@ def load_config() -> Config:
     STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "sqlite").strip().lower()
     GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID", "")
     GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "")
-    GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
 
     return Config(
         bot_token=BOT_TOKEN,
@@ -53,7 +51,6 @@ def load_config() -> Config:
         storage_backend=STORAGE_BACKEND,
         google_sheets_id=GOOGLE_SHEETS_ID,
         google_service_account_file=GOOGLE_SERVICE_ACCOUNT_FILE,
-        google_service_account_json=GOOGLE_SERVICE_ACCOUNT_JSON,
     )
 
 

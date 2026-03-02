@@ -33,12 +33,6 @@ async def main() -> None:
     if not config.bot_token or config.bot_token == "PASTE_YOUR_BOT_TOKEN_HERE":
         raise RuntimeError("Укажите BOT_TOKEN в config.py или .env")
 
-    print(
-        f"[BOOT] STORAGE_BACKEND={config.storage_backend}, "
-        f"GOOGLE_SHEETS_ID={'set' if config.google_sheets_id else 'empty'}",
-        flush=True,
-    )
-
     bot = Bot(
         token=config.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
