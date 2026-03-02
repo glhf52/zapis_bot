@@ -16,6 +16,8 @@ from database import db
 from keyboards import (
     main_menu_keyboard,
     subscription_check_keyboard,
+    booking_procedures_keyboard,
+    booking_doctors_keyboard,
     booking_days_keyboard,
     booking_times_keyboard,
     confirm_booking_keyboard,
@@ -204,7 +206,7 @@ async def show_portfolio(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "menu_book")
 async def start_booking(callback: CallbackQuery, state: FSMContext, bot) -> None:
-    """Начало процесса записи: проверка подписки, затем выбор даты."""
+    """Начало процесса записи: проверка подписки, затем выбор процедуры."""
     if not await check_subscription(callback.from_user.id, bot):
         await safe_edit_text(
             callback,
@@ -213,19 +215,86 @@ async def start_booking(callback: CallbackQuery, state: FSMContext, bot) -> None
         )
         return
 
-    await state.set_state(BookingStates.choosing_date)
-    days = await db.get_available_days()
-    if not days:
+    procedures_rows = await db.get_procedures()
+    procedures = [(row["id"], row["name"]) for row in procedures_rows]
+    if not procedures:
         await safe_edit_text(
             callback,
-            "К сожалению, сейчас нет доступных слотов для записи.\n"
-            "Попробуйте позже или свяжитесь с мастером.",
+            "Пока не настроены процедуры. Обратитесь к администратору.",
             reply_markup=main_menu_keyboard(
                 is_admin=callback.from_user.id == config.admin_id
             ),
         )
         return
 
+    await state.set_state(BookingStates.choosing_procedure)
+    await safe_edit_text(
+        callback,
+        "<b>Выберите процедуру:</b>",
+        reply_markup=booking_procedures_keyboard(procedures),
+    )
+
+
+@router.callback_query(BookingStates.choosing_procedure, F.data.startswith("book_procedure:"))
+async def choose_procedure(callback: CallbackQuery, state: FSMContext) -> None:
+    """Выбор процедуры и показ доступных врачей."""
+    _, procedure_id_str = callback.data.split(":", maxsplit=1)
+    procedure_id = int(procedure_id_str)
+
+    doctors_rows = await db.get_doctors_for_procedure(procedure_id)
+    if not doctors_rows:
+        await callback.answer("Для этой процедуры пока нет доступных врачей.", show_alert=True)
+        return
+
+    await state.update_data(chosen_procedure_id=procedure_id)
+    await state.set_state(BookingStates.choosing_doctor)
+    doctors = [(row["id"], row["name"]) for row in doctors_rows]
+    await safe_edit_text(
+        callback,
+        "<b>Выберите врача:</b>",
+        reply_markup=booking_doctors_keyboard(doctors),
+    )
+
+
+@router.callback_query(BookingStates.choosing_doctor, F.data == "back_to_procedures")
+async def back_to_procedures(callback: CallbackQuery, state: FSMContext) -> None:
+    """Возврат к выбору процедуры."""
+    procedures_rows = await db.get_procedures()
+    procedures = [(row["id"], row["name"]) for row in procedures_rows]
+    await state.set_state(BookingStates.choosing_procedure)
+    await safe_edit_text(
+        callback,
+        "<b>Выберите процедуру:</b>",
+        reply_markup=booking_procedures_keyboard(procedures),
+    )
+
+
+@router.callback_query(BookingStates.choosing_doctor, F.data.startswith("book_doctor:"))
+async def choose_doctor(callback: CallbackQuery, state: FSMContext) -> None:
+    """Выбор врача и показ доступных дат."""
+    _, doctor_id_str = callback.data.split(":", maxsplit=1)
+    doctor_id = int(doctor_id_str)
+    data = await state.get_data()
+    procedure_id = data.get("chosen_procedure_id")
+    if not procedure_id:
+        await callback.answer("Сначала выберите процедуру.", show_alert=True)
+        await state.set_state(BookingStates.choosing_procedure)
+        return
+
+    days = await db.get_available_days(procedure_id=procedure_id, doctor_id=doctor_id)
+    if not days:
+        await safe_edit_text(
+            callback,
+            "К сожалению, для выбранного врача сейчас нет доступных слотов.\n"
+            "Выберите другого врача или попробуйте позже.",
+            reply_markup=booking_doctors_keyboard(
+                [(row["id"], row["name"]) for row in await db.get_doctors_for_procedure(procedure_id)]
+            ),
+        )
+        return
+
+    await state.update_data(chosen_doctor_id=doctor_id)
+    await state.set_state(BookingStates.choosing_date)
     await safe_edit_text(
         callback,
         "<b>Выберите дату</b> для записи (в течение ближайшего месяца):",
@@ -255,7 +324,15 @@ async def choose_day(callback: CallbackQuery, state: FSMContext) -> None:
     """Выбор даты и показ времени."""
     _, date_str = callback.data.split(":", maxsplit=1)
     chosen_date = date.fromisoformat(date_str)
-    times_rows = await db.get_available_times(chosen_date)
+    data = await state.get_data()
+    procedure_id = data.get("chosen_procedure_id")
+    doctor_id = data.get("chosen_doctor_id")
+    if not procedure_id or not doctor_id:
+        await callback.answer("Сначала выберите процедуру и врача.", show_alert=True)
+        return
+    times_rows = await db.get_available_times(
+        chosen_date, procedure_id=procedure_id, doctor_id=doctor_id
+    )
     if not times_rows:
         await callback.answer("На этот день нет свободного времени.", show_alert=True)
         return
@@ -274,7 +351,21 @@ async def choose_day(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(BookingStates.choosing_time, F.data == "back_to_days")
 async def back_to_days(callback: CallbackQuery, state: FSMContext) -> None:
     """Возврат к выбору даты."""
-    days = await db.get_available_days()
+    data = await state.get_data()
+    procedure_id = data.get("chosen_procedure_id")
+    doctor_id = data.get("chosen_doctor_id")
+    if not procedure_id or not doctor_id:
+        await state.set_state(BookingStates.choosing_procedure)
+        procedures_rows = await db.get_procedures()
+        await safe_edit_text(
+            callback,
+            "<b>Выберите процедуру:</b>",
+            reply_markup=booking_procedures_keyboard(
+                [(row["id"], row["name"]) for row in procedures_rows]
+            ),
+        )
+        return
+    days = await db.get_available_days(procedure_id=procedure_id, doctor_id=doctor_id)
     if not days:
         await state.clear()
         await safe_edit_text(
@@ -292,6 +383,33 @@ async def back_to_days(callback: CallbackQuery, state: FSMContext) -> None:
         callback,
         "<b>Выберите дату</b> для записи:",
         reply_markup=booking_days_keyboard(days),
+    )
+
+
+@router.callback_query(BookingStates.choosing_date, F.data == "back_to_doctors")
+async def back_to_doctors(callback: CallbackQuery, state: FSMContext) -> None:
+    """Возврат к выбору врача."""
+    data = await state.get_data()
+    procedure_id = data.get("chosen_procedure_id")
+    if not procedure_id:
+        await state.set_state(BookingStates.choosing_procedure)
+        procedures_rows = await db.get_procedures()
+        await safe_edit_text(
+            callback,
+            "<b>Выберите процедуру:</b>",
+            reply_markup=booking_procedures_keyboard(
+                [(row["id"], row["name"]) for row in procedures_rows]
+            ),
+        )
+        return
+    doctors_rows = await db.get_doctors_for_procedure(procedure_id)
+    await state.set_state(BookingStates.choosing_doctor)
+    await safe_edit_text(
+        callback,
+        "<b>Выберите врача:</b>",
+        reply_markup=booking_doctors_keyboard(
+            [(row["id"], row["name"]) for row in doctors_rows]
+        ),
     )
 
 
@@ -463,6 +581,8 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, bot, sched
 
     date_str = slot["date"]
     time_str = slot["time"]
+    doctor_name = slot["doctor_name"] or "Не указан"
+    procedure_name = slot["procedure_name"] or "Не указана"
 
     # Планируем напоминания
     await schedule_booking_reminders(
@@ -478,6 +598,8 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, bot, sched
     dt = date.fromisoformat(date_str)
     text = (
         "<b>Запись успешно создана!</b>\n\n"
+        f"Процедура: <b>{procedure_name}</b>\n"
+        f"Врач: <b>{doctor_name}</b>\n"
         f"Дата: <b>{dt.strftime('%d.%m.%Y')}</b>\n"
         f"Время: <b>{time_str}</b>\n"
         f"Имя: <b>{name}</b>\n"
@@ -500,6 +622,8 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, bot, sched
             f"Клиент: <b>{name}</b>\n"
             f"Телефон: <b>{phone}</b>\n"
             f"TG: @{callback.from_user.username or 'без username'}\n"
+            f"Процедура: <b>{procedure_name}</b>\n"
+            f"Врач: <b>{doctor_name}</b>\n"
             f"Дата: <b>{dt.strftime('%d.%m.%Y')}</b>\n"
             f"Время: <b>{time_str}</b>",
         )
@@ -511,6 +635,8 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, bot, sched
         await bot.send_message(
             config.channel_id,
             f"<b>Запись подтверждена</b>\n"
+            f"Процедура: <b>{procedure_name}</b>\n"
+            f"Врач: <b>{doctor_name}</b>\n"
             f"Дата: <b>{dt.strftime('%d.%m.%Y')}</b>\n"
             f"Время: <b>{time_str}</b>\n"
             f"Клиент: <b>{name}</b>",
@@ -538,8 +664,12 @@ async def my_booking(callback: CallbackQuery, state: FSMContext) -> None:
 
     dt = date.fromisoformat(booking["date"])
     time_str = booking["time"]
+    doctor_name = booking["doctor_name"] or "Не указан"
+    procedure_name = booking["procedure_name"] or "Не указана"
     text = (
         "<b>Ваша запись:</b>\n\n"
+        f"Процедура: <b>{procedure_name}</b>\n"
+        f"Врач: <b>{doctor_name}</b>\n"
         f"Дата: <b>{dt.strftime('%d.%m.%Y')}</b>\n"
         f"Время: <b>{time_str}</b>\n\n"
         "Если вы не сможете прийти, вы можете отменить запись."
@@ -620,16 +750,74 @@ async def admin_menu(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(AdminStates.choosing_action, F.data == "admin_add_slots")
 async def admin_add_slots(callback: CallbackQuery, state: FSMContext) -> None:
-    """Начало добавления слотов: просим дату."""
+    """Начало добавления слотов: просим выбрать процедуру и врача."""
     if callback.from_user.id != config.admin_id:
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    await state.set_state(AdminStates.adding_day)
+    procedures = await db.get_procedures()
+    if not procedures:
+        await callback.answer("Справочник процедур пуст.", show_alert=True)
+        return
+    procedures_text = "\n".join([f"{r['id']}. {r['name']}" for r in procedures])
+    await state.set_state(AdminStates.adding_procedure)
     await safe_edit_text(
         callback,
-        "Введите дату в формате <b>ДД.ММ.ГГГГ</b>, для которой нужно добавить слоты:",
+        "Выберите процедуру. Отправьте ID процедуры:\n\n"
+        f"{procedures_text}",
     )
+
+
+@router.message(AdminStates.adding_procedure)
+async def admin_add_select_procedure(message: Message, state: FSMContext) -> None:
+    """Получаем ID процедуры и просим выбрать врача."""
+    if message.from_user.id != config.admin_id:
+        await message.answer("Недостаточно прав.")
+        return
+
+    try:
+        procedure_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("Введите корректный ID процедуры числом.")
+        return
+
+    doctors = await db.get_doctors_for_procedure(procedure_id)
+    if not doctors:
+        await message.answer("Для выбранной процедуры нет врачей. Введите другой ID.")
+        return
+
+    await state.update_data(admin_procedure_id=procedure_id)
+    await state.set_state(AdminStates.adding_doctor)
+    doctors_text = "\n".join([f"{r['id']}. {r['name']}" for r in doctors])
+    await message.answer(
+        "Выберите врача. Отправьте ID врача:\n\n"
+        f"{doctors_text}"
+    )
+
+
+@router.message(AdminStates.adding_doctor)
+async def admin_add_select_doctor(message: Message, state: FSMContext) -> None:
+    """Получаем врача и просим дату."""
+    if message.from_user.id != config.admin_id:
+        await message.answer("Недостаточно прав.")
+        return
+    try:
+        doctor_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("Введите корректный ID врача числом.")
+        return
+
+    data = await state.get_data()
+    procedure_id = data.get("admin_procedure_id")
+    allowed_doctors = await db.get_doctors_for_procedure(procedure_id)
+    allowed_ids = {row["id"] for row in allowed_doctors}
+    if doctor_id not in allowed_ids:
+        await message.answer("Этот врач не привязан к выбранной процедуре. Введите другой ID.")
+        return
+
+    await state.update_data(admin_doctor_id=doctor_id)
+    await state.set_state(AdminStates.adding_day)
+    await message.answer("Введите дату в формате <b>ДД.ММ.ГГГГ</b>, для которой нужно добавить слоты:")
 
 
 @router.message(AdminStates.adding_day)
@@ -662,8 +850,10 @@ async def admin_add_times(message: Message, state: FSMContext) -> None:
 
     data = await state.get_data()
     date_str = data.get("admin_day")
-    if not date_str:
-        await message.answer("Дата не найдена, начните сначала.")
+    doctor_id = data.get("admin_doctor_id")
+    procedure_id = data.get("admin_procedure_id")
+    if not date_str or not doctor_id or not procedure_id:
+        await message.answer("Не хватает данных (процедура/врач/дата). Начните сначала.")
         await state.clear()
         return
 
@@ -676,7 +866,7 @@ async def admin_add_times(message: Message, state: FSMContext) -> None:
             tm = datetime.strptime(p, "%H:%M").time()
         except ValueError:
             continue
-        await db.create_slot(dt, tm)
+        await db.create_slot(dt, tm, doctor_id=doctor_id, procedure_id=procedure_id)
         created += 1
 
     await state.clear()

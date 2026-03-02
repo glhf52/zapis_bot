@@ -39,7 +39,34 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     date TEXT NOT NULL,           -- YYYY-MM-DD
                     time TEXT NOT NULL,           -- HH:MM
-                    is_available INTEGER NOT NULL DEFAULT 1
+                    is_available INTEGER NOT NULL DEFAULT 1,
+                    doctor_id INTEGER,
+                    procedure_id INTEGER
+                )
+                """
+            )
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS doctors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL
+                )
+                """
+            )
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS procedures (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL
+                )
+                """
+            )
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS doctor_procedures (
+                    doctor_id INTEGER NOT NULL,
+                    procedure_id INTEGER NOT NULL,
+                    PRIMARY KEY (doctor_id, procedure_id)
                 )
                 """
             )
@@ -82,6 +109,51 @@ class Database:
             if "last_menu_message_id" not in col_names:
                 await db.execute(
                     "ALTER TABLE users ADD COLUMN last_menu_message_id INTEGER"
+                )
+            cur = await db.execute("PRAGMA table_info(slots)")
+            slot_cols = await cur.fetchall()
+            slot_col_names = {c[1] for c in slot_cols}
+            if "doctor_id" not in slot_col_names:
+                await db.execute("ALTER TABLE slots ADD COLUMN doctor_id INTEGER")
+            if "procedure_id" not in slot_col_names:
+                await db.execute("ALTER TABLE slots ADD COLUMN procedure_id INTEGER")
+
+            # Тестовые данные (Вариант A), если справочники пустые
+            cur = await db.execute("SELECT COUNT(*) FROM doctors")
+            doctors_count = (await cur.fetchone())[0]
+            if doctors_count == 0:
+                await db.executemany(
+                    "INSERT INTO doctors (name) VALUES (?)",
+                    [
+                        ("Иванов Андрей",),
+                        ("Смирнова Анна",),
+                        ("Петрова Мария",),
+                    ],
+                )
+            cur = await db.execute("SELECT COUNT(*) FROM procedures")
+            procedures_count = (await cur.fetchone())[0]
+            if procedures_count == 0:
+                await db.executemany(
+                    "INSERT INTO procedures (name) VALUES (?)",
+                    [
+                        ("Осмотр",),
+                        ("Лечение кариеса",),
+                        ("Профессиональная чистка",),
+                    ],
+                )
+
+            cur = await db.execute("SELECT COUNT(*) FROM doctor_procedures")
+            rel_count = (await cur.fetchone())[0]
+            if rel_count == 0:
+                # Вариант A: все врачи делают все тестовые процедуры
+                cur = await db.execute("SELECT id FROM doctors")
+                doctors = await cur.fetchall()
+                cur = await db.execute("SELECT id FROM procedures")
+                procedures = await cur.fetchall()
+                pairs = [(d[0], p[0]) for d in doctors for p in procedures]
+                await db.executemany(
+                    "INSERT INTO doctor_procedures (doctor_id, procedure_id) VALUES (?, ?)",
+                    pairs,
                 )
             await db.commit()
 
@@ -140,25 +212,29 @@ class Database:
             db.row_factory = aiosqlite.Row
             cur = await db.execute(
                 """
-                SELECT b.*, s.date, s.time
+                SELECT b.*, s.date, s.time, d.name as doctor_name, p.name as procedure_name
                 FROM bookings b
                 JOIN users u ON u.id = b.user_id
                 JOIN slots s ON s.id = b.slot_id
+                LEFT JOIN doctors d ON d.id = s.doctor_id
+                LEFT JOIN procedures p ON p.id = s.procedure_id
                 WHERE u.tg_id = ? AND b.status = 'active'
                 """,
                 (tg_id,),
             )
             return await cur.fetchone()
 
-    async def create_slot(self, d: date, t: time) -> None:
+    async def create_slot(
+        self, d: date, t: time, doctor_id: int, procedure_id: int
+    ) -> None:
         """Создать один временной слот (для админ-панели)."""
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
                 """
-                INSERT INTO slots (date, time, is_available)
-                VALUES (?, ?, 1)
+                INSERT INTO slots (date, time, is_available, doctor_id, procedure_id)
+                VALUES (?, ?, 1, ?, ?)
                 """,
-                (d.isoformat(), t.strftime("%H:%M")),
+                (d.isoformat(), t.strftime("%H:%M"), doctor_id, procedure_id),
             )
             await db.commit()
 
@@ -176,7 +252,9 @@ class Database:
             )
             await db.commit()
 
-    async def get_available_days(self) -> List[str]:
+    async def get_available_days(
+        self, procedure_id: Optional[int] = None, doctor_id: Optional[int] = None
+    ) -> List[str]:
         """Дни, в которых есть свободные слоты в течение ближайших 30 дней."""
         today = date.today()
         # 31 день вперёд (включая сегодня), только будни
@@ -184,14 +262,20 @@ class Database:
         days: List[str] = []
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            cur = await db.execute(
-                """
+            query = """
                 SELECT DISTINCT date
                 FROM slots
                 WHERE is_available = 1
-                ORDER BY date
-                """
-            )
+            """
+            params: list = []
+            if procedure_id is not None:
+                query += " AND procedure_id = ?"
+                params.append(procedure_id)
+            if doctor_id is not None:
+                query += " AND doctor_id = ?"
+                params.append(doctor_id)
+            query += " ORDER BY date"
+            cur = await db.execute(query, tuple(params))
             rows = await cur.fetchall()
             for r in rows:
                 d = date.fromisoformat(r["date"])
@@ -200,19 +284,26 @@ class Database:
                     days.append(r["date"])
         return days
 
-    async def get_available_times(self, d: date) -> List[aiosqlite.Row]:
+    async def get_available_times(
+        self, d: date, procedure_id: Optional[int] = None, doctor_id: Optional[int] = None
+    ) -> List[aiosqlite.Row]:
         """Свободные слоты на конкретную дату."""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            cur = await db.execute(
-                """
+            query = """
                 SELECT id, time
                 FROM slots
                 WHERE date = ? AND is_available = 1
-                ORDER BY time
-                """,
-                (d.isoformat(),),
-            )
+            """
+            params: list = [d.isoformat()]
+            if procedure_id is not None:
+                query += " AND procedure_id = ?"
+                params.append(procedure_id)
+            if doctor_id is not None:
+                query += " AND doctor_id = ?"
+                params.append(doctor_id)
+            query += " ORDER BY time"
+            cur = await db.execute(query, tuple(params))
             return await cur.fetchall()
 
     async def book_slot(self, tg_id: int, slot_id: int) -> Optional[int]:
@@ -370,7 +461,14 @@ class Database:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             cur = await db.execute(
-                "SELECT id, date, time, is_available FROM slots WHERE id = ?",
+                """
+                SELECT s.id, s.date, s.time, s.is_available,
+                       d.name as doctor_name, p.name as procedure_name
+                FROM slots s
+                LEFT JOIN doctors d ON d.id = s.doctor_id
+                LEFT JOIN procedures p ON p.id = s.procedure_id
+                WHERE s.id = ?
+                """,
                 (slot_id,),
             )
             return await cur.fetchone()
@@ -385,10 +483,14 @@ class Database:
                        s.time as time,
                        u.name as name,
                        u.phone as phone,
-                       u.tg_id as tg_id
+                       u.tg_id as tg_id,
+                       d.name as doctor_name,
+                       p.name as procedure_name
                 FROM bookings b
                 JOIN slots s ON s.id = b.slot_id
                 JOIN users u ON u.id = b.user_id
+                LEFT JOIN doctors d ON d.id = s.doctor_id
+                LEFT JOIN procedures p ON p.id = s.procedure_id
                 WHERE s.date = ? AND b.status = 'active'
                 ORDER BY s.time
                 """,
@@ -407,15 +509,42 @@ class Database:
                        u.name as name,
                        u.phone as phone,
                        s.date as date,
-                       s.time as time
+                       s.time as time,
+                       d.name as doctor_name,
+                       p.name as procedure_name
                 FROM bookings b
                 JOIN users u ON u.id = b.user_id
                 JOIN slots s ON s.id = b.slot_id
+                LEFT JOIN doctors d ON d.id = s.doctor_id
+                LEFT JOIN procedures p ON p.id = s.procedure_id
                 WHERE b.id = ?
                 """,
                 (booking_id,),
             )
             return await cur.fetchone()
+
+    async def get_procedures(self) -> List[aiosqlite.Row]:
+        """Список процедур."""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT id, name FROM procedures ORDER BY name")
+            return await cur.fetchall()
+
+    async def get_doctors_for_procedure(self, procedure_id: int) -> List[aiosqlite.Row]:
+        """Список врачей, которые делают выбранную процедуру."""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                """
+                SELECT d.id, d.name
+                FROM doctors d
+                JOIN doctor_procedures dp ON dp.doctor_id = d.id
+                WHERE dp.procedure_id = ?
+                ORDER BY d.name
+                """,
+                (procedure_id,),
+            )
+            return await cur.fetchall()
 
     async def set_setting(self, key: str, value: str) -> None:
         """Сохранить произвольную настройку."""

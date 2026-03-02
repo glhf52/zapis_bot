@@ -90,9 +90,7 @@ def booking_days_keyboard(available_days: list[str]) -> InlineKeyboardMarkup:
     if row:
         buttons.append(row)
 
-    buttons.append(
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
-    )
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_doctors")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -116,6 +114,30 @@ def booking_times_keyboard(
 
     buttons.append(
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_days")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def booking_procedures_keyboard(
+    procedures: list[tuple[int, str]]
+) -> InlineKeyboardMarkup:
+    """Клавиатура выбора процедуры."""
+    buttons = [
+        [InlineKeyboardButton(text=name, callback_data=f"book_procedure:{proc_id}")]
+        for proc_id, name in procedures
+    ]
+    buttons.append([InlineKeyboardButton(text="🔙 В меню", callback_data="back_to_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def booking_doctors_keyboard(doctors: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    """Клавиатура выбора врача."""
+    buttons = [
+        [InlineKeyboardButton(text=name, callback_data=f"book_doctor:{doctor_id}")]
+        for doctor_id, name in doctors
+    ]
+    buttons.append(
+        [InlineKeyboardButton(text="🔙 К процедурам", callback_data="back_to_procedures")]
     )
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
