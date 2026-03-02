@@ -95,6 +95,17 @@ class SheetsDatabase:
             "Комментарий",
         ],
     }
+    STATUS_ALIASES = {
+        "free": "free",
+        "свободно": "free",
+        "свободный": "free",
+        "booked": "booked",
+        "занято": "booked",
+        "занят": "booked",
+        "blocked": "blocked",
+        "закрыто": "blocked",
+        "закрыт": "blocked",
+    }
 
     def __init__(
         self,
@@ -153,7 +164,106 @@ class SheetsDatabase:
         for field, label in zip(fields, labels):
             header_to_field[field] = field
             header_to_field[label] = field
+        # Дополнительные alias-имена колонок, если команда переименует заголовки вручную.
+        if key == "slots":
+            header_to_field.update(
+                {
+                    "врач": "doctor_id",
+                    "процедура": "procedure_id",
+                    "клиент": "client_name",
+                    "телефон": "client_phone",
+                    "телеграм": "tg_id",
+                }
+            )
+        if key == "doctors":
+            header_to_field.update({"врач": "doctor_id", "имя": "name", "активен": "active"})
+        if key == "procedures":
+            header_to_field.update(
+                {"процедура": "procedure_id", "название": "name", "активна": "active"}
+            )
         return fields, labels, header_to_field
+
+    @staticmethod
+    def _norm_text(value: Any) -> str:
+        return str(value or "").strip()
+
+    def _normalize_status(self, value: Any) -> str:
+        raw = self._norm_text(value).lower()
+        return self.STATUS_ALIASES.get(raw, raw)
+
+    @staticmethod
+    def _is_inactive(value: Any) -> bool:
+        raw = str(value or "").strip().lower()
+        return raw in {"0", "нет", "false", "no", "inactive", "неактивен"}
+
+    async def _normalize_slots_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Разрешает русские значения в слотах: статус, врач/процедура по имени."""
+        doctors = await self._records("doctors")
+        procedures = await self._records("procedures")
+        doctor_name_to_id = {
+            self._norm_text(d.get("name")).lower(): self._norm_text(d.get("doctor_id"))
+            for d in doctors
+            if self._norm_text(d.get("doctor_id"))
+        }
+        procedure_name_to_id = {
+            self._norm_text(p.get("name")).lower(): self._norm_text(p.get("procedure_id"))
+            for p in procedures
+            if self._norm_text(p.get("procedure_id"))
+        }
+
+        for rec in rows:
+            rec["status"] = self._normalize_status(rec.get("status"))
+            source = self._norm_text(rec.get("source")).lower()
+            if source in {"админ", "admin"}:
+                rec["source"] = "admin"
+            elif source in {"бот", "bot"}:
+                rec["source"] = "bot"
+
+            d = self._norm_text(rec.get("date"))
+            if d.count(".") == 2:
+                try:
+                    rec["date"] = datetime.strptime(d, "%d.%m.%Y").date().isoformat()
+                except Exception:
+                    pass
+            rec["time"] = self._norm_text(rec.get("time")).replace(".", ":")
+
+            doctor_value = self._norm_text(rec.get("doctor_id"))
+            if doctor_value and not doctor_value.isdigit():
+                rec["doctor_id"] = doctor_name_to_id.get(doctor_value.lower(), doctor_value)
+
+            procedure_value = self._norm_text(rec.get("procedure_id"))
+            if procedure_value and not procedure_value.isdigit():
+                rec["procedure_id"] = procedure_name_to_id.get(
+                    procedure_value.lower(), procedure_value
+                )
+        return rows
+
+    async def _normalize_doctor_procedure_rows(
+        self, rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Разрешает в связях значения по именам вместо ID."""
+        doctors = await self._records("doctors")
+        procedures = await self._records("procedures")
+        doctor_name_to_id = {
+            self._norm_text(d.get("name")).lower(): self._norm_text(d.get("doctor_id"))
+            for d in doctors
+            if self._norm_text(d.get("doctor_id"))
+        }
+        procedure_name_to_id = {
+            self._norm_text(p.get("name")).lower(): self._norm_text(p.get("procedure_id"))
+            for p in procedures
+            if self._norm_text(p.get("procedure_id"))
+        }
+        for rec in rows:
+            doctor_value = self._norm_text(rec.get("doctor_id"))
+            if doctor_value and not doctor_value.isdigit():
+                rec["doctor_id"] = doctor_name_to_id.get(doctor_value.lower(), doctor_value)
+            procedure_value = self._norm_text(rec.get("procedure_id"))
+            if procedure_value and not procedure_value.isdigit():
+                rec["procedure_id"] = procedure_name_to_id.get(
+                    procedure_value.lower(), procedure_value
+                )
+        return rows
 
     async def _get_or_create_ws(self, key: str):
         """Получить/создать вкладку; при необходимости переименовать legacy-вкладку."""
@@ -204,7 +314,7 @@ class SheetsDatabase:
             if not values:
                 return []
             raw_headers = values[0]
-            col_to_field = [header_to_field.get(h, "") for h in raw_headers]
+            col_to_field = [header_to_field.get(h, header_to_field.get(h.lower(), "")) for h in raw_headers]
             out = []
             for row in values[1:]:
                 # нормализуем длину
@@ -220,7 +330,12 @@ class SheetsDatabase:
                     out.append(rec)
             return out
 
-        return await self._run_with_retry(_op)
+        rows = await self._run_with_retry(_op)
+        if title == "slots":
+            return await self._normalize_slots_rows(rows)
+        if title == "doctor_procedures":
+            return await self._normalize_doctor_procedure_rows(rows)
+        return rows
 
     async def _append(self, title: str, row_map: dict[str, Any]) -> None:
         await self._ensure_sheet(title)
@@ -377,7 +492,7 @@ class SheetsDatabase:
         rows = await self._records("procedures")
         out = []
         for r in rows:
-            if str(r.get("active", "1")) == "0":
+            if self._is_inactive(r.get("active", "1")):
                 continue
             out.append({"id": int(r["procedure_id"]), "name": r["name"]})
         return out
@@ -392,7 +507,7 @@ class SheetsDatabase:
         }
         out = []
         for d in doctors:
-            if str(d.get("active", "1")) == "0":
+            if self._is_inactive(d.get("active", "1")):
                 continue
             if str(d["doctor_id"]) in allowed:
                 out.append({"id": int(d["doctor_id"]), "name": d["name"]})
