@@ -21,6 +21,7 @@ class Config:
     google_sheets_id: str = ""
     google_service_account_file: str = ""
     google_service_account_json: str = ""
+    google_service_account_json_b64: str = ""
 
 
 def _required_env(name: str) -> str:
@@ -42,6 +43,7 @@ def load_config() -> Config:
     GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID", "")
     GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "")
     GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    GOOGLE_SERVICE_ACCOUNT_JSON_B64 = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON_B64", "")
 
     return Config(
         bot_token=BOT_TOKEN,
@@ -54,6 +56,7 @@ def load_config() -> Config:
         google_sheets_id=GOOGLE_SHEETS_ID,
         google_service_account_file=GOOGLE_SERVICE_ACCOUNT_FILE,
         google_service_account_json=GOOGLE_SERVICE_ACCOUNT_JSON,
+        google_service_account_json_b64=GOOGLE_SERVICE_ACCOUNT_JSON_B64,
     )
 
 

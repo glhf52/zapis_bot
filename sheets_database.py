@@ -1,9 +1,11 @@
 import asyncio
+import base64
 import json
 from datetime import date, datetime, time, timedelta
 from typing import Any, Optional
 
 import gspread
+from gspread.exceptions import APIError
 
 from config import config
 
@@ -37,10 +39,12 @@ class SheetsDatabase:
         spreadsheet_id: str,
         service_account_file: str = "",
         service_account_json: str = "",
+        service_account_json_b64: str = "",
     ):
         self.spreadsheet_id = spreadsheet_id
         self.service_account_file = service_account_file
         self.service_account_json = service_account_json
+        self.service_account_json_b64 = service_account_json_b64
         self.gc = None
         self.sh = None
 
@@ -49,7 +53,11 @@ class SheetsDatabase:
             return
 
         def _connect():
-            if self.service_account_json:
+            if self.service_account_json_b64:
+                decoded = base64.b64decode(self.service_account_json_b64).decode("utf-8")
+                account_info = json.loads(decoded)
+                gc = gspread.service_account_from_dict(account_info)
+            elif self.service_account_json:
                 account_info = json.loads(self.service_account_json)
                 gc = gspread.service_account_from_dict(account_info)
             else:
@@ -57,7 +65,23 @@ class SheetsDatabase:
             sh = gc.open_by_key(self.spreadsheet_id)
             return gc, sh
 
-        self.gc, self.sh = await asyncio.to_thread(_connect)
+        self.gc, self.sh = await self._run_with_retry(_connect)
+
+    async def _run_with_retry(self, fn, retries: int = 6):
+        """Выполняет запросы к Google Sheets с ретраями при 429."""
+        delay = 1.5
+        for attempt in range(retries):
+            try:
+                return await asyncio.to_thread(fn)
+            except APIError as e:
+                msg = str(e)
+                if "429" in msg or "Quota exceeded" in msg:
+                    if attempt == retries - 1:
+                        raise
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 1.8, 20)
+                    continue
+                raise
 
     async def _ensure_sheet(self, title: str) -> None:
         await self._ensure_client()
@@ -74,7 +98,7 @@ class SheetsDatabase:
                 ws.append_row(headers, value_input_option="RAW")
             return ws
 
-        await asyncio.to_thread(_op)
+        await self._run_with_retry(_op)
 
     async def _records(self, title: str) -> list[dict[str, Any]]:
         await self._ensure_sheet(title)
@@ -83,7 +107,7 @@ class SheetsDatabase:
             ws = self.sh.worksheet(title)
             return ws.get_all_records()
 
-        return await asyncio.to_thread(_op)
+        return await self._run_with_retry(_op)
 
     async def _append(self, title: str, row_map: dict[str, Any]) -> None:
         await self._ensure_sheet(title)
@@ -94,7 +118,7 @@ class SheetsDatabase:
             ws = self.sh.worksheet(title)
             ws.append_row(row, value_input_option="RAW")
 
-        await asyncio.to_thread(_op)
+        await self._run_with_retry(_op)
 
     async def _find_row_idx_by_key(
         self, title: str, key: str, value: Any
@@ -117,7 +141,7 @@ class SheetsDatabase:
                 col = headers.index(k) + 1
                 ws.update_cell(row_idx, col, v)
 
-        await asyncio.to_thread(_op)
+        await self._run_with_retry(_op)
 
     async def _delete_row(self, title: str, row_idx: int) -> None:
         await self._ensure_sheet(title)
@@ -126,7 +150,7 @@ class SheetsDatabase:
             ws = self.sh.worksheet(title)
             ws.delete_rows(row_idx)
 
-        await asyncio.to_thread(_op)
+        await self._run_with_retry(_op)
 
     async def _next_id(self, title: str, id_field: str) -> int:
         records = await self._records(title)
@@ -501,15 +525,18 @@ class SheetsDatabase:
 
 def build_sheets_db() -> SheetsDatabase:
     has_json = bool((config.google_service_account_json or "").strip())
+    has_json_b64 = bool((config.google_service_account_json_b64 or "").strip())
     has_file = bool((config.google_service_account_file or "").strip())
-    if not config.google_sheets_id or (not has_json and not has_file):
+    if not config.google_sheets_id or (not has_json and not has_json_b64 and not has_file):
         raise RuntimeError(
             "Для STORAGE_BACKEND=sheets задайте GOOGLE_SHEETS_ID и "
-            "GOOGLE_SERVICE_ACCOUNT_JSON или GOOGLE_SERVICE_ACCOUNT_FILE"
+            "GOOGLE_SERVICE_ACCOUNT_JSON_B64 / GOOGLE_SERVICE_ACCOUNT_JSON / "
+            "GOOGLE_SERVICE_ACCOUNT_FILE"
         )
     return SheetsDatabase(
         spreadsheet_id=config.google_sheets_id,
         service_account_file=config.google_service_account_file,
         service_account_json=config.google_service_account_json,
+        service_account_json_b64=config.google_service_account_json_b64,
     )
 
