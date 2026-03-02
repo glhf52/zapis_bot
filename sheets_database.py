@@ -32,6 +32,21 @@ class SheetsDatabase:
             "created_at",
         ],
         "settings": ["key", "value"],
+        "journal": [
+            "event_time",
+            "action",
+            "slot_id",
+            "date",
+            "time",
+            "doctor_id",
+            "procedure_id",
+            "status",
+            "source",
+            "client_name",
+            "client_phone",
+            "tg_id",
+            "comment",
+        ],
     }
 
     def __init__(
@@ -162,6 +177,32 @@ class SheetsDatabase:
                 continue
         return max_id + 1
 
+    async def _append_journal(
+        self,
+        action: str,
+        slot_row: Optional[dict[str, Any]] = None,
+        comment: str = "",
+    ) -> None:
+        slot_row = slot_row or {}
+        await self._append(
+            "journal",
+            {
+                "event_time": datetime.now().isoformat(),
+                "action": action,
+                "slot_id": slot_row.get("slot_id", ""),
+                "date": slot_row.get("date", ""),
+                "time": slot_row.get("time", ""),
+                "doctor_id": slot_row.get("doctor_id", ""),
+                "procedure_id": slot_row.get("procedure_id", ""),
+                "status": slot_row.get("status", ""),
+                "source": slot_row.get("source", ""),
+                "client_name": slot_row.get("client_name", ""),
+                "client_phone": slot_row.get("client_phone", ""),
+                "tg_id": slot_row.get("tg_id", ""),
+                "comment": comment,
+            },
+        )
+
     async def init(self) -> None:
         for title in self.SHEETS_HEADERS:
             await self._ensure_sheet(title)
@@ -264,22 +305,21 @@ class SheetsDatabase:
         self, d: date, t: time, doctor_id: int, procedure_id: int
     ) -> None:
         slot_id = await self._next_id("slots", "slot_id")
-        await self._append(
-            "slots",
-            {
-                "slot_id": slot_id,
-                "date": d.isoformat(),
-                "time": t.strftime("%H:%M"),
-                "doctor_id": doctor_id,
-                "procedure_id": procedure_id,
-                "status": "free",
-                "source": "admin",
-                "client_name": "",
-                "client_phone": "",
-                "tg_id": "",
-                "created_at": datetime.now().isoformat(),
-            },
-        )
+        row = {
+            "slot_id": slot_id,
+            "date": d.isoformat(),
+            "time": t.strftime("%H:%M"),
+            "doctor_id": doctor_id,
+            "procedure_id": procedure_id,
+            "status": "free",
+            "source": "admin",
+            "client_name": "",
+            "client_phone": "",
+            "tg_id": "",
+            "created_at": datetime.now().isoformat(),
+        }
+        await self._append("slots", row)
+        await self._append_journal("create_slot", row)
 
     async def delete_slot(self, slot_id: int) -> None:
         row_idx, rec = await self._find_row_idx_by_key("slots", "slot_id", slot_id)
@@ -294,6 +334,8 @@ class SheetsDatabase:
         for idx, rec in enumerate(rows, start=2):
             if rec.get("date") == d.isoformat() and rec.get("status") == "free":
                 await self._update_row("slots", idx, {"status": "blocked"})
+                rec["status"] = "blocked"
+                await self._append_journal("close_day", rec)
 
     async def get_available_days(
         self, procedure_id: Optional[int] = None, doctor_id: Optional[int] = None
@@ -359,6 +401,16 @@ class SheetsDatabase:
                 "tg_id": str(tg_id),
             },
         )
+        rec.update(
+            {
+                "status": "booked",
+                "source": "bot",
+                "client_name": user_name,
+                "client_phone": user_phone,
+                "tg_id": str(tg_id),
+            }
+        )
+        await self._append_journal("book_slot", rec)
         return int(slot_id)
 
     async def cancel_booking(self, booking_id: int) -> Optional[tuple[str, str]]:
@@ -376,6 +428,16 @@ class SheetsDatabase:
                 "tg_id": "",
             },
         )
+        rec.update(
+            {
+                "status": "free",
+                "source": "",
+                "client_name": "",
+                "client_phone": "",
+                "tg_id": "",
+            }
+        )
+        await self._append_journal("cancel_booking", rec)
         return rec["date"], rec["time"]
 
     async def get_booking_for_reminders(self) -> list[dict[str, Any]]:
