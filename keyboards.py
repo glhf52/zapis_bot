@@ -142,6 +142,44 @@ def booking_doctors_keyboard(doctors: list[tuple[int, str]]) -> InlineKeyboardMa
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def admin_procedures_keyboard(
+    procedures: list[tuple[int, str]]
+) -> InlineKeyboardMarkup:
+    """Клавиатура выбора процедуры для админа."""
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text=name, callback_data=f"admin_add_procedure:{proc_id}"
+            )
+        ]
+        for proc_id, name in procedures
+    ]
+    buttons.append(
+        [InlineKeyboardButton(text="🔙 В админ-панель", callback_data="menu_admin")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_doctors_keyboard(doctors: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    """Клавиатура выбора врача для админа."""
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text=name, callback_data=f"admin_add_doctor:{doctor_id}"
+            )
+        ]
+        for doctor_id, name in doctors
+    ]
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                text="🔙 К процедурам", callback_data="admin_add_back_to_procedures"
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def confirm_booking_keyboard() -> InlineKeyboardMarkup:
     """Подтверждение записи."""
     return InlineKeyboardMarkup(

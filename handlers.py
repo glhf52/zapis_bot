@@ -18,6 +18,8 @@ from keyboards import (
     subscription_check_keyboard,
     booking_procedures_keyboard,
     booking_doctors_keyboard,
+    admin_procedures_keyboard,
+    admin_doctors_keyboard,
     booking_days_keyboard,
     booking_times_keyboard,
     confirm_booking_keyboard,
@@ -750,27 +752,96 @@ async def admin_menu(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(AdminStates.choosing_action, F.data == "admin_add_slots")
 async def admin_add_slots(callback: CallbackQuery, state: FSMContext) -> None:
-    """Начало добавления слотов: просим выбрать процедуру и врача."""
+    """Начало добавления слотов: выбор процедуры через inline."""
     if callback.from_user.id != config.admin_id:
         await callback.answer("Недостаточно прав.", show_alert=True)
         return
 
-    procedures = await db.get_procedures()
+    procedures_rows = await db.get_procedures()
+    procedures = [(row["id"], row["name"]) for row in procedures_rows]
     if not procedures:
         await callback.answer("Справочник процедур пуст.", show_alert=True)
         return
-    procedures_text = "\n".join([f"{r['id']}. {r['name']}" for r in procedures])
+
     await state.set_state(AdminStates.adding_procedure)
     await safe_edit_text(
         callback,
-        "Выберите процедуру. Отправьте ID процедуры:\n\n"
-        f"{procedures_text}",
+        "<b>Добавление слотов</b>\n\nВыберите процедуру:",
+        reply_markup=admin_procedures_keyboard(procedures),
+    )
+
+
+@router.callback_query(
+    AdminStates.adding_procedure,
+    F.data.startswith("admin_add_procedure:"),
+)
+async def admin_add_select_procedure_cb(callback: CallbackQuery, state: FSMContext) -> None:
+    """Выбор процедуры через inline-кнопку."""
+    if callback.from_user.id != config.admin_id:
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    _, procedure_id_str = callback.data.split(":", maxsplit=1)
+    procedure_id = int(procedure_id_str)
+    doctors_rows = await db.get_doctors_for_procedure(procedure_id)
+    doctors = [(row["id"], row["name"]) for row in doctors_rows]
+    if not doctors:
+        await callback.answer("Для выбранной процедуры нет врачей.", show_alert=True)
+        return
+
+    await state.update_data(admin_procedure_id=procedure_id)
+    await state.set_state(AdminStates.adding_doctor)
+    await safe_edit_text(
+        callback,
+        "<b>Добавление слотов</b>\n\nВыберите врача:",
+        reply_markup=admin_doctors_keyboard(doctors),
+    )
+
+
+@router.callback_query(AdminStates.adding_doctor, F.data == "admin_add_back_to_procedures")
+async def admin_add_back_to_procedures(callback: CallbackQuery, state: FSMContext) -> None:
+    """Возврат к выбору процедуры из выбора врача."""
+    if callback.from_user.id != config.admin_id:
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+    procedures_rows = await db.get_procedures()
+    procedures = [(row["id"], row["name"]) for row in procedures_rows]
+    await state.set_state(AdminStates.adding_procedure)
+    await safe_edit_text(
+        callback,
+        "<b>Добавление слотов</b>\n\nВыберите процедуру:",
+        reply_markup=admin_procedures_keyboard(procedures),
+    )
+
+
+@router.callback_query(AdminStates.adding_doctor, F.data.startswith("admin_add_doctor:"))
+async def admin_add_select_doctor_cb(callback: CallbackQuery, state: FSMContext) -> None:
+    """Выбор врача через inline-кнопку."""
+    if callback.from_user.id != config.admin_id:
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    _, doctor_id_str = callback.data.split(":", maxsplit=1)
+    doctor_id = int(doctor_id_str)
+    data = await state.get_data()
+    procedure_id = data.get("admin_procedure_id")
+    allowed_doctors = await db.get_doctors_for_procedure(procedure_id)
+    allowed_ids = {row["id"] for row in allowed_doctors}
+    if doctor_id not in allowed_ids:
+        await callback.answer("Этот врач недоступен для процедуры.", show_alert=True)
+        return
+
+    await state.update_data(admin_doctor_id=doctor_id)
+    await state.set_state(AdminStates.adding_day)
+    await safe_edit_text(
+        callback,
+        "Введите дату в формате <b>ДД.ММ.ГГГГ</b>, для которой нужно добавить слоты:",
     )
 
 
 @router.message(AdminStates.adding_procedure)
 async def admin_add_select_procedure(message: Message, state: FSMContext) -> None:
-    """Получаем ID процедуры и просим выбрать врача."""
+    """Фолбэк: получаем ID процедуры текстом и просим выбрать врача."""
     if message.from_user.id != config.admin_id:
         await message.answer("Недостаточно прав.")
         return
@@ -797,7 +868,7 @@ async def admin_add_select_procedure(message: Message, state: FSMContext) -> Non
 
 @router.message(AdminStates.adding_doctor)
 async def admin_add_select_doctor(message: Message, state: FSMContext) -> None:
-    """Получаем врача и просим дату."""
+    """Фолбэк: получаем врача текстом и просим дату."""
     if message.from_user.id != config.admin_id:
         await message.answer("Недостаточно прав.")
         return
