@@ -268,7 +268,65 @@ def admin_panel_keyboard() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="🧹 Очистить слоты",
+                    callback_data="admin_cleanup_slots",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="🔙 В главное меню", callback_data="back_to_menu"
+                )
+            ],
+        ]
+    )
+
+
+def admin_cleanup_slots_keyboard() -> InlineKeyboardMarkup:
+    """Выбор типа очистки слотов."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🟢 Очистить свободные",
+                    callback_data="admin_cleanup_pick:free",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔴 Очистить занятые",
+                    callback_data="admin_cleanup_pick:booked",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⚠️ Очистить все слоты",
+                    callback_data="admin_cleanup_pick:all",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 В админ-панель",
+                    callback_data="menu_admin",
+                )
+            ],
+        ]
+    )
+
+
+def admin_cleanup_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Подтверждение очистки слотов."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Подтвердить очистку",
+                    callback_data="admin_cleanup_confirm_yes",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Отмена",
+                    callback_data="admin_cleanup_confirm_no",
                 )
             ],
         ]

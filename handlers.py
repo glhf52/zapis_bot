@@ -27,6 +27,8 @@ from keyboards import (
     cancel_my_booking_keyboard,
     admin_panel_keyboard,
     portfolio_keyboard,
+    admin_cleanup_slots_keyboard,
+    admin_cleanup_confirm_keyboard,
 )
 from states import BookingStates, AdminStates
 
@@ -751,7 +753,7 @@ async def admin_menu(callback: CallbackQuery, state: FSMContext) -> None:
     )
 
 
-@router.callback_query(AdminStates.choosing_action, F.data == "admin_add_slots")
+@router.callback_query(F.data == "admin_add_slots")
 async def admin_add_slots(callback: CallbackQuery, state: FSMContext) -> None:
     """Начало добавления слотов: выбор процедуры через inline."""
     if callback.from_user.id != config.admin_id:
@@ -948,7 +950,7 @@ async def admin_add_times(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.callback_query(AdminStates.choosing_action, F.data == "admin_close_day")
+@router.callback_query(F.data == "admin_close_day")
 async def admin_close_day_start(callback: CallbackQuery, state: FSMContext) -> None:
     """Выбор даты кнопками для закрытия дня."""
     if callback.from_user.id != config.admin_id:
@@ -991,7 +993,7 @@ async def admin_close_day_finish(callback: CallbackQuery, state: FSMContext) -> 
     )
 
 
-@router.callback_query(AdminStates.choosing_action, F.data == "admin_view_day")
+@router.callback_query(F.data == "admin_view_day")
 async def admin_view_day_start(callback: CallbackQuery, state: FSMContext) -> None:
     """Выбор даты кнопками для просмотра расписания."""
     if callback.from_user.id != config.admin_id:
@@ -1055,7 +1057,7 @@ async def admin_view_day_show(callback: CallbackQuery, state: FSMContext) -> Non
     await safe_edit_text(callback, text, reply_markup=admin_panel_keyboard())
 
 
-@router.callback_query(AdminStates.choosing_action, F.data == "admin_cancel_booking")
+@router.callback_query(F.data == "admin_cancel_booking")
 async def admin_cancel_booking_start(callback: CallbackQuery, state: FSMContext) -> None:
     """Старт отмены записи клиенту: спрашиваем дату."""
     if callback.from_user.id != config.admin_id:
@@ -1182,6 +1184,107 @@ async def admin_cancel_booking_do(
     await safe_edit_text(
         callback,
         f"Запись клиента на {dt.strftime('%d.%m.%Y')} в {time_str} отменена, слот снова доступен.",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "admin_cleanup_slots")
+async def admin_cleanup_slots_start(callback: CallbackQuery, state: FSMContext) -> None:
+    """Старт очистки слотов: выбираем тип очистки."""
+    if callback.from_user.id != config.admin_id:
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.cleaning_slots_choose)
+    await safe_edit_text(
+        callback,
+        "<b>Очистка слотов</b>\nВыберите, какие слоты удалить:",
+        reply_markup=admin_cleanup_slots_keyboard(),
+    )
+
+
+@router.callback_query(
+    AdminStates.cleaning_slots_choose, F.data.startswith("admin_cleanup_pick:")
+)
+async def admin_cleanup_slots_pick(callback: CallbackQuery, state: FSMContext) -> None:
+    """Выбор режима очистки и запрос подтверждения."""
+    if callback.from_user.id != config.admin_id:
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    _, mode = callback.data.split(":", maxsplit=1)
+    if mode not in {"free", "booked", "all"}:
+        await callback.answer("Неизвестный режим очистки.", show_alert=True)
+        return
+
+    mode_text = {
+        "free": "🟢 Только свободные",
+        "booked": "🔴 Только занятые",
+        "all": "⚠️ Все слоты",
+    }[mode]
+    await state.update_data(cleanup_mode=mode)
+    await state.set_state(AdminStates.cleaning_slots_confirm)
+    await safe_edit_text(
+        callback,
+        "<b>Подтверждение очистки</b>\n"
+        f"Режим: <b>{mode_text}</b>\n\n"
+        "Это действие удалит данные без возможности восстановления.",
+        reply_markup=admin_cleanup_confirm_keyboard(),
+    )
+
+
+@router.callback_query(
+    AdminStates.cleaning_slots_confirm, F.data == "admin_cleanup_confirm_no"
+)
+async def admin_cleanup_slots_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    """Отмена очистки и возврат в админ-панель."""
+    if callback.from_user.id != config.admin_id:
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.choosing_action)
+    await safe_edit_text(
+        callback,
+        "<b>Очистка отменена.</b>\nВыберите действие:",
+        reply_markup=admin_panel_keyboard(),
+    )
+
+
+@router.callback_query(
+    AdminStates.cleaning_slots_confirm, F.data == "admin_cleanup_confirm_yes"
+)
+async def admin_cleanup_slots_confirm(
+    callback: CallbackQuery, state: FSMContext, scheduler
+) -> None:
+    """Подтверждённая очистка слотов."""
+    if callback.from_user.id != config.admin_id:
+        await callback.answer("Недостаточно прав.", show_alert=True)
+        return
+
+    data = await state.get_data()
+    mode = data.get("cleanup_mode")
+    if mode not in {"free", "booked", "all"}:
+        await state.set_state(AdminStates.choosing_action)
+        await safe_edit_text(
+            callback,
+            "Не выбран режим очистки. Выберите действие:",
+            reply_markup=admin_panel_keyboard(),
+        )
+        return
+
+    removed_slots, booking_ids = await db.clear_slots(mode)
+    for booking_id in booking_ids:
+        remove_booking_reminders(scheduler, booking_id)
+
+    mode_text = {
+        "free": "свободных",
+        "booked": "занятых",
+        "all": "всех",
+    }[mode]
+    await state.set_state(AdminStates.choosing_action)
+    await safe_edit_text(
+        callback,
+        f"Готово: удалено <b>{removed_slots}</b> {mode_text} слотов.",
         reply_markup=admin_panel_keyboard(),
     )
 

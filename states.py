@@ -25,4 +25,6 @@ class AdminStates(StatesGroup):
     viewing_day_choose = State()
     cancelling_booking_choose_day = State()
     cancelling_booking_choose_booking = State()
+    cleaning_slots_choose = State()
+    cleaning_slots_confirm = State()
 

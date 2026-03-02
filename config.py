@@ -39,11 +39,24 @@ def load_config() -> Config:
     CHANNEL_LINK = _required_env("CHANNEL_LINK")
     DB_PATH = os.getenv("DB_PATH", "database.sqlite3")
     MAIN_MENU_IMAGE = os.getenv("MAIN_MENU_IMAGE", "")
-    STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "sqlite").strip().lower()
+    STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "").strip().lower()
     GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID", "")
     GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "")
     GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
     GOOGLE_SERVICE_ACCOUNT_JSON_B64 = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON_B64", "")
+
+    # Защита от потери данных:
+    # если backend не задан явно, но заданы Google-переменные, автоматически используем Sheets.
+    if not STORAGE_BACKEND:
+        has_google_creds = bool(
+            GOOGLE_SHEETS_ID
+            and (
+                GOOGLE_SERVICE_ACCOUNT_JSON_B64
+                or GOOGLE_SERVICE_ACCOUNT_JSON
+                or GOOGLE_SERVICE_ACCOUNT_FILE
+            )
+        )
+        STORAGE_BACKEND = "sheets" if has_google_creds else "sqlite"
 
     return Config(
         bot_token=BOT_TOKEN,

@@ -13,7 +13,8 @@ from config import config
 class SheetsDatabase:
     """Google Sheets backend with sqlite-like async interface."""
 
-    SHEETS_HEADERS = {
+    # Логические поля (внутренние ключи для кода)
+    SHEETS_FIELDS = {
         "users": ["tg_id", "name", "phone", "last_menu_message_id"],
         "doctors": ["doctor_id", "name", "active"],
         "procedures": ["procedure_id", "name", "active"],
@@ -46,6 +47,52 @@ class SheetsDatabase:
             "client_phone",
             "tg_id",
             "comment",
+        ],
+    }
+    # Русские названия вкладок для удобства команды
+    SHEET_TITLES_RU = {
+        "users": "Пользователи",
+        "doctors": "Врачи",
+        "procedures": "Процедуры",
+        "doctor_procedures": "Связи врач-процедура",
+        "slots": "Слоты",
+        "settings": "Настройки",
+        "journal": "Журнал",
+    }
+    # Русские заголовки колонок
+    SHEETS_HEADERS_RU = {
+        "users": ["ID Telegram", "Имя", "Телефон", "ID последнего меню"],
+        "doctors": ["ID врача", "Имя врача", "Активен (1/0)"],
+        "procedures": ["ID процедуры", "Название процедуры", "Активна (1/0)"],
+        "doctor_procedures": ["ID врача", "ID процедуры"],
+        "slots": [
+            "ID слота",
+            "Дата",
+            "Время",
+            "ID врача",
+            "ID процедуры",
+            "Статус",
+            "Источник",
+            "Имя клиента",
+            "Телефон клиента",
+            "ID Telegram",
+            "Создано",
+        ],
+        "settings": ["Ключ", "Значение"],
+        "journal": [
+            "Время события",
+            "Действие",
+            "ID слота",
+            "Дата",
+            "Время",
+            "ID врача",
+            "ID процедуры",
+            "Статус",
+            "Источник",
+            "Имя клиента",
+            "Телефон клиента",
+            "ID Telegram",
+            "Комментарий",
         ],
     }
 
@@ -98,39 +145,90 @@ class SheetsDatabase:
                     continue
                 raise
 
-    async def _ensure_sheet(self, title: str) -> None:
+    def _header_maps(self, key: str) -> tuple[list[str], list[str], dict[str, str]]:
+        """Вернуть поля, русские заголовки и карту заголовок->поле."""
+        fields = self.SHEETS_FIELDS[key]
+        labels = self.SHEETS_HEADERS_RU[key]
+        header_to_field = {}
+        for field, label in zip(fields, labels):
+            header_to_field[field] = field
+            header_to_field[label] = field
+        return fields, labels, header_to_field
+
+    async def _get_or_create_ws(self, key: str):
+        """Получить/создать вкладку; при необходимости переименовать legacy-вкладку."""
         await self._ensure_client()
-        headers = self.SHEETS_HEADERS[title]
+        ru_title = self.SHEET_TITLES_RU[key]
 
         def _op():
             try:
-                ws = self.sh.worksheet(title)
+                return self.sh.worksheet(ru_title)
             except gspread.WorksheetNotFound:
-                ws = self.sh.add_worksheet(title=title, rows=1000, cols=len(headers) + 5)
+                pass
+            # legacy: старая вкладка с английским именем
+            try:
+                ws = self.sh.worksheet(key)
+                ws.update_title(ru_title)
+                return ws
+            except gspread.WorksheetNotFound:
+                pass
+            return self.sh.add_worksheet(
+                title=ru_title, rows=1000, cols=len(self.SHEETS_FIELDS[key]) + 5
+            )
+
+        return await self._run_with_retry(_op)
+
+    async def _ensure_sheet(self, title: str) -> None:
+        fields, labels, _ = self._header_maps(title)
+        ws = await self._get_or_create_ws(title)
+
+        def _op():
             first_row = ws.row_values(1)
-            if first_row != headers:
-                ws.clear()
-                ws.append_row(headers, value_input_option="RAW")
+            if not first_row:
+                ws.append_row(labels, value_input_option="RAW")
+                return ws
+            # Держим шапку в актуальном русском формате (без очистки данных)
+            if first_row != labels:
+                ws.update("1:1", [labels], value_input_option="RAW")
             return ws
 
         await self._run_with_retry(_op)
 
     async def _records(self, title: str) -> list[dict[str, Any]]:
         await self._ensure_sheet(title)
+        fields, _, header_to_field = self._header_maps(title)
 
         def _op():
-            ws = self.sh.worksheet(title)
-            return ws.get_all_records()
+            ws = self.sh.worksheet(self.SHEET_TITLES_RU[title])
+            values = ws.get_all_values()
+            if not values:
+                return []
+            raw_headers = values[0]
+            col_to_field = [header_to_field.get(h, "") for h in raw_headers]
+            out = []
+            for row in values[1:]:
+                # нормализуем длину
+                if len(row) < len(raw_headers):
+                    row = row + [""] * (len(raw_headers) - len(row))
+                rec = {f: "" for f in fields}
+                for i, cell in enumerate(row):
+                    field = col_to_field[i] if i < len(col_to_field) else ""
+                    if field:
+                        rec[field] = cell
+                # пропускаем полностью пустые строки
+                if any(str(v).strip() for v in rec.values()):
+                    out.append(rec)
+            return out
 
         return await self._run_with_retry(_op)
 
     async def _append(self, title: str, row_map: dict[str, Any]) -> None:
         await self._ensure_sheet(title)
-        headers = self.SHEETS_HEADERS[title]
-        row = [row_map.get(h, "") for h in headers]
+        fields, _, _ = self._header_maps(title)
+        row = [row_map.get(h, "") for h in fields]
 
         def _op():
-            ws = self.sh.worksheet(title)
+            ws = self.sh.worksheet(self.SHEET_TITLES_RU[title])
             ws.append_row(row, value_input_option="RAW")
 
         await self._run_with_retry(_op)
@@ -146,14 +244,14 @@ class SheetsDatabase:
 
     async def _update_row(self, title: str, row_idx: int, updates: dict[str, Any]) -> None:
         await self._ensure_sheet(title)
-        headers = self.SHEETS_HEADERS[title]
+        fields, _, _ = self._header_maps(title)
 
         def _op():
-            ws = self.sh.worksheet(title)
+            ws = self.sh.worksheet(self.SHEET_TITLES_RU[title])
             for k, v in updates.items():
-                if k not in headers:
+                if k not in fields:
                     continue
-                col = headers.index(k) + 1
+                col = fields.index(k) + 1
                 ws.update_cell(row_idx, col, v)
 
         await self._run_with_retry(_op)
@@ -162,7 +260,7 @@ class SheetsDatabase:
         await self._ensure_sheet(title)
 
         def _op():
-            ws = self.sh.worksheet(title)
+            ws = self.sh.worksheet(self.SHEET_TITLES_RU[title])
             ws.delete_rows(row_idx)
 
         await self._run_with_retry(_op)
@@ -204,7 +302,7 @@ class SheetsDatabase:
         )
 
     async def init(self) -> None:
-        for title in self.SHEETS_HEADERS:
+        for title in self.SHEETS_FIELDS:
             await self._ensure_sheet(title)
 
         doctors = await self._records("doctors")
@@ -573,6 +671,50 @@ class SheetsDatabase:
             )
         out.sort(key=lambda x: x["time"])
         return out
+
+    async def clear_slots(self, mode: str) -> tuple[int, list[int]]:
+        """
+        Очистить слоты по режиму:
+        - free: только свободные
+        - booked: только занятые
+        - all: все слоты
+        Возвращает (кол-во удалённых слотов, список booking_id для снятия reminder jobs).
+        """
+        if mode not in {"free", "booked", "all"}:
+            return 0, []
+
+        rows = await self._records("slots")
+        to_delete: list[int] = []
+        booking_ids: list[int] = []
+
+        for idx, r in enumerate(rows, start=2):
+            status = str(r.get("status", "")).strip()
+            is_booked = status == "booked"
+            is_free = status == "free"
+
+            match = (
+                (mode == "free" and is_free)
+                or (mode == "booked" and is_booked)
+                or mode == "all"
+            )
+            if not match:
+                continue
+
+            to_delete.append(idx)
+            if is_booked:
+                try:
+                    booking_ids.append(int(r["slot_id"]))
+                except Exception:
+                    pass
+
+        if not to_delete:
+            return 0, []
+
+        # Удаляем с конца, чтобы индексы строк не смещались.
+        for row_idx in sorted(to_delete, reverse=True):
+            await self._delete_row("slots", row_idx)
+
+        return len(to_delete), booking_ids
 
     # Backward compatibility no-ops
     async def save_reminder(self, booking_id: int, run_at: datetime, job_id: str) -> None:

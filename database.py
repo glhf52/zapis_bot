@@ -610,6 +610,76 @@ class Database:
             )
             return await cur.fetchall()
 
+    async def clear_slots(self, mode: str) -> tuple[int, list[int]]:
+        """
+        Очистить слоты по режиму:
+        - free: только свободные
+        - booked: только занятые (с активной записью)
+        - all: все слоты
+        Возвращает (кол-во удалённых слотов, список booking_id для снятия reminder jobs).
+        """
+        if mode not in {"free", "booked", "all"}:
+            return 0, []
+
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+
+            if mode == "free":
+                cur = await db.execute(
+                    """
+                    SELECT s.id
+                    FROM slots s
+                    LEFT JOIN bookings b ON b.slot_id = s.id AND b.status = 'active'
+                    WHERE s.is_available = 1 AND b.id IS NULL
+                    """
+                )
+            elif mode == "booked":
+                cur = await db.execute(
+                    """
+                    SELECT DISTINCT s.id
+                    FROM slots s
+                    JOIN bookings b ON b.slot_id = s.id AND b.status = 'active'
+                    """
+                )
+            else:
+                cur = await db.execute("SELECT id FROM slots")
+
+            slot_rows = await cur.fetchall()
+            slot_ids = [int(r["id"]) for r in slot_rows]
+            if not slot_ids:
+                return 0, []
+
+            placeholders = ",".join(["?"] * len(slot_ids))
+
+            cur = await db.execute(
+                f"""
+                SELECT id
+                FROM bookings
+                WHERE status = 'active' AND slot_id IN ({placeholders})
+                """,
+                tuple(slot_ids),
+            )
+            booking_rows = await cur.fetchall()
+            booking_ids = [int(r["id"]) for r in booking_rows]
+
+            if booking_ids:
+                reminder_ph = ",".join(["?"] * len(booking_ids))
+                await db.execute(
+                    f"DELETE FROM reminders WHERE booking_id IN ({reminder_ph})",
+                    tuple(booking_ids),
+                )
+
+            await db.execute(
+                f"DELETE FROM bookings WHERE slot_id IN ({placeholders})",
+                tuple(slot_ids),
+            )
+            await db.execute(
+                f"DELETE FROM slots WHERE id IN ({placeholders})",
+                tuple(slot_ids),
+            )
+            await db.commit()
+            return len(slot_ids), booking_ids
+
 
 db = Database(config.database_path)
 
